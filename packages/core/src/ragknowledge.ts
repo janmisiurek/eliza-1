@@ -402,12 +402,12 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                 `[File Progress] Starting ${file.path} (${fileSizeKB.toFixed(2)} KB)`
             );
 
-            // Step 1: Split content into main description and rest
+            // Step 1: Split content into embedding section and rest
             const effectiveDelimiter = file.delimiter || this.defaultDelimiter;
-            const [mainDescription, ...contentSections] = content.split(effectiveDelimiter);
+            const [embeddingSection, ...contentSections] = content.split(effectiveDelimiter);
 
-            // Step 2: Create main document first
-            const mainEmbeddingArray = await embed(this.runtime, mainDescription.trim());
+            // Step 2: Create main document using first section's embedding
+            const mainEmbeddingArray = await embed(this.runtime, embeddingSection.trim());
             const mainEmbedding = new Float32Array(mainEmbeddingArray);
 
             await this.runtime.databaseAdapter.createKnowledge({
@@ -427,15 +427,20 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
             });
             timeMarker("Main document storage");
 
-            // Step 3: Process remaining sections into chunks
+            // Step 3: Process remaining content into chunks
             if (contentSections.length > 0) {
                 const remainingContent = contentSections.join(effectiveDelimiter);
-                const chunks = await splitChunks(
-                    remainingContent,
-                    file.chunkSize || this.defaultChunkSize,
-                    file.bleed || this.defaultBleed,
-                    effectiveDelimiter
-                );
+                const chunkSize = file.chunkSize || this.defaultChunkSize;
+
+                // Only split into chunks if content exceeds chunk size
+                const chunks = new TextEncoder().encode(remainingContent).length > chunkSize
+                    ? await splitChunks(
+                        remainingContent,
+                        chunkSize,
+                        file.bleed || this.defaultBleed,
+                        effectiveDelimiter
+                    )
+                    : [remainingContent];
 
                 const totalChunks = chunks.length;
                 elizaLogger.info(`Generated ${totalChunks} chunks`);
