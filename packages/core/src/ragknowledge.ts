@@ -424,20 +424,24 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
             const mainEmbeddingArray = await embed(this.runtime, embeddingSection.trim());
             const mainEmbedding = new Float32Array(mainEmbeddingArray);
 
+            const mainId = stringToUuid(file.path);
+            const mainCreatedAt = Date.now();
+
             await this.runtime.databaseAdapter.createKnowledge({
-                id: stringToUuid(file.path),
+                id: mainId,
                 agentId: this.runtime.agentId,
                 content: {
-                    text: content, // Store full content in main document
+                    text: embeddingSection.trim(), // Store only first section as main document
                     metadata: {
                         source: file.path,
                         type: file.type,
                         isShared: file.isShared || false,
-                        isMain: true
+                        isMain: true,
+                        chunkIndex: 0
                     },
                 },
                 embedding: mainEmbedding,
-                createdAt: Date.now(),
+                createdAt: mainCreatedAt,
             });
             timeMarker("Main document storage");
 
@@ -488,7 +492,7 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                     await Promise.all(
                         embeddings.map(async (embeddingArray, index) => {
                             const chunkId =
-                                `${stringToUuid(file.path)}-chunk-${i + index}` as UUID;
+                                `${mainId}-chunk-${i + index + 1}` as UUID; // Start chunk indices from 1
                             const chunkEmbedding = new Float32Array(embeddingArray);
 
                             await this.runtime.databaseAdapter.createKnowledge({
@@ -501,12 +505,12 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                                         type: file.type,
                                         isShared: file.isShared || false,
                                         isChunk: true,
-                                        originalId: stringToUuid(file.path),
-                                        chunkIndex: i + index,
+                                        originalId: mainId,
+                                        chunkIndex: i + index + 1, // Start chunk indices from 1
                                     },
                                 },
                                 embedding: chunkEmbedding,
-                                createdAt: Date.now(),
+                                createdAt: mainCreatedAt + (i + index + 1), // Ensure chronological order
                             });
                         })
                     );
