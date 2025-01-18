@@ -402,95 +402,19 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                 `[File Progress] Starting ${file.path} (${fileSizeKB.toFixed(2)} KB)`
             );
 
-            // Step 1: Preprocessing
-            const processedContent = this.preprocess(content);
-            timeMarker("Preprocessing");
+            // Step 1: Split content into main description and rest
+            const effectiveDelimiter = file.delimiter || this.defaultDelimiter;
+            const [mainDescription, ...contentSections] = content.split(effectiveDelimiter);
 
-            // Step 2: Determine if we should use delimiters
-            const shouldUseDelimiters = file.respectDelimiters ?? this.respectDelimiters;
-            const effectiveDelimiter = shouldUseDelimiters ? (file.delimiter || this.defaultDelimiter) : undefined;
-
-            elizaLogger.debug(
-                `Chunking configuration:`,
-                {
-                    chunkSize: file.chunkSize || this.defaultChunkSize,
-                    bleed: file.bleed || this.defaultBleed,
-                    delimiter: effectiveDelimiter,
-                    shouldUseDelimiters
-                }
-            );
-
-            // Step 3: Generate chunks with configured parameters
-            const chunks = await splitChunks(
-                processedContent,
-                file.chunkSize || this.defaultChunkSize,
-                file.bleed || this.defaultBleed,
-                effectiveDelimiter
-            );
-
-            const totalChunks = chunks.length;
-            elizaLogger.info(`Generated ${totalChunks} chunks`);
-            timeMarker("Chunk generation");
-
-            // Step 4: Process chunks with larger batches
-            const BATCH_SIZE = 10;
-            let processedChunks = 0;
-
-            for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-                const batchStart = Date.now();
-                const batch = chunks.slice(
-                    i,
-                    Math.min(i + BATCH_SIZE, chunks.length)
-                );
-
-                // Process embeddings in parallel
-                const embeddings = await Promise.all(
-                    batch.map((chunk) => embed(this.runtime, chunk))
-                );
-
-                // Batch database operations
-                await Promise.all(
-                    embeddings.map(async (embeddingArray, index) => {
-                        const chunkId =
-                            `${stringToUuid(file.path)}-chunk-${i + index}` as UUID;
-                        const chunkEmbedding = new Float32Array(embeddingArray);
-
-                        await this.runtime.databaseAdapter.createKnowledge({
-                            id: chunkId,
-                            agentId: this.runtime.agentId,
-                            content: {
-                                text: batch[index],
-                                metadata: {
-                                    source: file.path,
-                                    type: file.type,
-                                    isShared: file.isShared || false,
-                                    isChunk: true,
-                                    originalId: stringToUuid(file.path),
-                                    chunkIndex: i + index,
-                                },
-                            },
-                            embedding: chunkEmbedding,
-                            createdAt: Date.now(),
-                        });
-                    })
-                );
-
-                processedChunks += batch.length;
-                const batchTime = (Date.now() - batchStart) / 1000;
-                elizaLogger.info(
-                    `[Batch Progress] Processed ${processedChunks}/${totalChunks} chunks (${batchTime.toFixed(2)}s for batch)`
-                );
-            }
-
-            // Step 5: Create main document using first chunk's embedding as representative
-            const mainEmbeddingArray = await embed(this.runtime, chunks[0]);
+            // Step 2: Create main document first
+            const mainEmbeddingArray = await embed(this.runtime, mainDescription.trim());
             const mainEmbedding = new Float32Array(mainEmbeddingArray);
 
             await this.runtime.databaseAdapter.createKnowledge({
                 id: stringToUuid(file.path),
                 agentId: this.runtime.agentId,
                 content: {
-                    text: content,
+                    text: content, // Store full content in main document
                     metadata: {
                         source: file.path,
                         type: file.type,
@@ -503,21 +427,77 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
             });
             timeMarker("Main document storage");
 
+            // Step 3: Process remaining sections into chunks
+            if (contentSections.length > 0) {
+                const remainingContent = contentSections.join(effectiveDelimiter);
+                const chunks = await splitChunks(
+                    remainingContent,
+                    file.chunkSize || this.defaultChunkSize,
+                    file.bleed || this.defaultBleed,
+                    effectiveDelimiter
+                );
+
+                const totalChunks = chunks.length;
+                elizaLogger.info(`Generated ${totalChunks} chunks`);
+                timeMarker("Chunk generation");
+
+                // Step 4: Process chunks with larger batches
+                const BATCH_SIZE = 10;
+                let processedChunks = 0;
+
+                for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+                    const batchStart = Date.now();
+                    const batch = chunks.slice(
+                        i,
+                        Math.min(i + BATCH_SIZE, chunks.length)
+                    );
+
+                    // Process embeddings in parallel
+                    const embeddings = await Promise.all(
+                        batch.map((chunk) => embed(this.runtime, chunk))
+                    );
+
+                    // Batch database operations
+                    await Promise.all(
+                        embeddings.map(async (embeddingArray, index) => {
+                            const chunkId =
+                                `${stringToUuid(file.path)}-chunk-${i + index}` as UUID;
+                            const chunkEmbedding = new Float32Array(embeddingArray);
+
+                            await this.runtime.databaseAdapter.createKnowledge({
+                                id: chunkId,
+                                agentId: this.runtime.agentId,
+                                content: {
+                                    text: batch[index],
+                                    metadata: {
+                                        source: file.path,
+                                        type: file.type,
+                                        isShared: file.isShared || false,
+                                        isChunk: true,
+                                        originalId: stringToUuid(file.path),
+                                        chunkIndex: i + index,
+                                    },
+                                },
+                                embedding: chunkEmbedding,
+                                createdAt: Date.now(),
+                            });
+                        })
+                    );
+
+                    processedChunks += batch.length;
+                    const batchTime = (Date.now() - batchStart) / 1000;
+                    elizaLogger.info(
+                        `[Batch Progress] Processed ${processedChunks}/${totalChunks} chunks (${batchTime.toFixed(2)}s for batch)`
+                    );
+                }
+            }
+
             const totalTime = (Date.now() - startTime) / 1000;
             elizaLogger.info(
-                `[Complete] Processed ${file.path} in ${totalTime.toFixed(2)}s`
+                `[File Complete] Finished ${file.path} in ${totalTime.toFixed(2)}s`
             );
         } catch (error) {
-            if (
-                file.isShared &&
-                error?.code === "SQLITE_CONSTRAINT_PRIMARYKEY"
-            ) {
-                elizaLogger.info(
-                    `Shared knowledge ${file.path} already exists in database, skipping creation`
-                );
-                return;
-            }
-            elizaLogger.error(`Error processing file ${file.path}:`, error);
+            elizaLogger.error("Error processing file:", error);
             throw error;
         }
     }

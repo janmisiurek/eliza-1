@@ -1088,15 +1088,21 @@ export async function splitChunks(
 ): Promise<string[]> {
     if (!content) return [];
 
-    // If delimiter is provided, first split by delimiter
+    // If delimiter is provided, handle first section differently
     if (delimiter) {
         const sections = content.split(delimiter);
         const chunks: string[] = [];
 
-        for (const section of sections) {
+        // Add first section as a whole chunk (if it exists and isn't empty)
+        if (sections[0] && sections[0].trim()) {
+            chunks.push(sections[0].trim());
+        }
+
+        // Process remaining sections with RecursiveCharacterTextSplitter
+        for (let i = 1; i < sections.length; i++) {
+            const section = sections[i];
             if (!section.trim()) continue;
 
-            // For each section, use RecursiveCharacterTextSplitter with proper separators
             const textSplitter = new RecursiveCharacterTextSplitter({
                 chunkSize: Number(chunkSize),
                 chunkOverlap: Number(bleed),
