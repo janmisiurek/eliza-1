@@ -5,6 +5,7 @@ import {
     IAgentRuntime,
     IRAGKnowledgeManager,
     RAGKnowledgeItem,
+    RAGKnowledgeManagerOptions,
     UUID,
 } from "./types.ts";
 import { stringToUuid } from "./uuid.ts";
@@ -24,14 +25,36 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
     tableName: string;
 
     /**
+     * Default chunk size for text splitting
+     */
+    private readonly defaultChunkSize: number = 512;
+
+    /**
+     * Default overlap between chunks
+     */
+    private readonly defaultBleed: number = 20;
+
+    /**
+     * Default delimiter for splitting text
+     */
+    private readonly defaultDelimiter: string = "---";
+
+    /**
+     * Whether to respect delimiters when splitting text
+     */
+    private readonly respectDelimiters: boolean = true;
+
+    /**
      * Constructs a new KnowledgeManager instance.
      * @param opts Options for the manager.
-     * @param opts.tableName The name of the table this manager will operate on.
-     * @param opts.runtime The AgentRuntime instance associated with this manager.
      */
-    constructor(opts: { tableName: string; runtime: IAgentRuntime }) {
+    constructor(opts: RAGKnowledgeManagerOptions) {
         this.runtime = opts.runtime;
         this.tableName = opts.tableName;
+        this.defaultChunkSize = opts.chunkSize || this.defaultChunkSize;
+        this.defaultBleed = opts.bleed || this.defaultBleed;
+        this.defaultDelimiter = opts.delimiter || this.defaultDelimiter;
+        this.respectDelimiters = opts.respectDelimiters ?? this.respectDelimiters;
     }
 
     private readonly defaultRAGMatchThreshold = 0.85;
@@ -360,6 +383,10 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
         content: string;
         type: "pdf" | "md" | "txt";
         isShared?: boolean;
+        chunkSize?: number;
+        bleed?: number;
+        delimiter?: string;
+        respectDelimiters?: boolean;
     }): Promise<void> {
         const timeMarker = (label: string) => {
             const time = (Date.now() - startTime) / 1000;
@@ -379,13 +406,33 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
             const processedContent = this.preprocess(content);
             timeMarker("Preprocessing");
 
-            // Step 2: Generate chunks first
-            const chunks = await splitChunks(processedContent, 512, 20);
+            // Step 2: Determine if we should use delimiters
+            const shouldUseDelimiters = file.respectDelimiters ?? this.respectDelimiters;
+            const effectiveDelimiter = shouldUseDelimiters ? (file.delimiter || this.defaultDelimiter) : undefined;
+
+            elizaLogger.debug(
+                `Chunking configuration:`,
+                {
+                    chunkSize: file.chunkSize || this.defaultChunkSize,
+                    bleed: file.bleed || this.defaultBleed,
+                    delimiter: effectiveDelimiter,
+                    shouldUseDelimiters
+                }
+            );
+
+            // Step 3: Generate chunks with configured parameters
+            const chunks = await splitChunks(
+                processedContent,
+                file.chunkSize || this.defaultChunkSize,
+                file.bleed || this.defaultBleed,
+                effectiveDelimiter
+            );
+
             const totalChunks = chunks.length;
             elizaLogger.info(`Generated ${totalChunks} chunks`);
             timeMarker("Chunk generation");
 
-            // Step 3: Process chunks with larger batches
+            // Step 4: Process chunks with larger batches
             const BATCH_SIZE = 10;
             let processedChunks = 0;
 
@@ -435,7 +482,7 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                 );
             }
 
-            // Step 4: Create main document using first chunk's embedding as representative
+            // Step 5: Create main document using first chunk's embedding as representative
             const mainEmbeddingArray = await embed(this.runtime, chunks[0]);
             const mainEmbedding = new Float32Array(mainEmbeddingArray);
 

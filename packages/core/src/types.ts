@@ -1110,16 +1110,14 @@ export interface IMemoryManager {
 export interface IRAGKnowledgeManager {
     runtime: IAgentRuntime;
     tableName: string;
-
     getKnowledge(params: {
         query?: string;
         id?: UUID;
-        limit?: number;
         conversationContext?: string;
+        limit?: number;
         agentId?: UUID;
     }): Promise<RAGKnowledgeItem[]>;
     createKnowledge(item: RAGKnowledgeItem): Promise<void>;
-    removeKnowledge(id: UUID): Promise<void>;
     searchKnowledge(params: {
         agentId: UUID;
         embedding: Float32Array | number[];
@@ -1127,13 +1125,27 @@ export interface IRAGKnowledgeManager {
         match_count?: number;
         searchText?: string;
     }): Promise<RAGKnowledgeItem[]>;
+    removeKnowledge(id: UUID): Promise<void>;
     clearKnowledge(shared?: boolean): Promise<void>;
     processFile(file: {
         path: string;
         content: string;
         type: "pdf" | "md" | "txt";
-        isShared: boolean;
+        isShared?: boolean;
+        chunkSize?: number;
+        bleed?: number;
+        delimiter?: string;
+        respectDelimiters?: boolean;
     }): Promise<void>;
+}
+
+export interface RAGKnowledgeManagerOptions {
+    tableName: string;
+    runtime: IAgentRuntime;
+    chunkSize?: number;
+    bleed?: number;
+    delimiter?: string;
+    respectDelimiters?: boolean;
 }
 
 export type CacheOptions = {

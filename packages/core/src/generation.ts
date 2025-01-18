@@ -1073,20 +1073,50 @@ export async function generateShouldRespond({
 }
 
 /**
- * Splits content into chunks of specified size with optional overlapping bleed sections
+ * Splits content into chunks of specified size with optional overlapping bleed sections and delimiters
  * @param content - The text content to split into chunks
  * @param chunkSize - The maximum size of each chunk in tokens
- * @param bleed - Number of characters to overlap between chunks (default: 100)
+ * @param bleed - Number of characters to overlap between chunks (default: 20)
+ * @param delimiter - Optional delimiter to split content (e.g. "---")
  * @returns Promise resolving to array of text chunks with bleed sections
  */
 export async function splitChunks(
     content: string,
     chunkSize: number = 512,
-    bleed: number = 20
+    bleed: number = 20,
+    delimiter?: string
 ): Promise<string[]> {
+    if (!content) return [];
+
+    // If delimiter is provided, first split by delimiter
+    if (delimiter) {
+        const sections = content.split(delimiter);
+        const chunks: string[] = [];
+
+        for (const section of sections) {
+            if (!section.trim()) continue;
+
+            // For each section, use RecursiveCharacterTextSplitter with proper separators
+            const textSplitter = new RecursiveCharacterTextSplitter({
+                chunkSize: Number(chunkSize),
+                chunkOverlap: Number(bleed),
+                separators: ["\n\n", "\n", ".", "!", "?", ",", " ", ""],
+                keepSeparator: true
+            });
+
+            const sectionChunks = await textSplitter.splitText(section.trim());
+            chunks.push(...sectionChunks);
+        }
+
+        return chunks;
+    }
+
+    // If no delimiter, use standard splitting with proper separators
     const textSplitter = new RecursiveCharacterTextSplitter({
         chunkSize: Number(chunkSize),
         chunkOverlap: Number(bleed),
+        separators: ["\n\n", "\n", ".", "!", "?", ",", " ", ""],
+        keepSeparator: true
     });
 
     return textSplitter.splitText(content);
@@ -2038,7 +2068,7 @@ async function handleGroq({
     const baseURL = getCloudflareGatewayBaseURL(runtime, 'groq');
     elizaLogger.debug("Groq handleGroq baseURL:", { baseURL });
 
-    const groq = createGroq({ apiKey, baseURL });
+    const groq = createGroq({ apiKey, fetch: runtime.fetch, baseURL });
     return await aiGenerateObject({
         model: groq.languageModel(model),
         schema,
