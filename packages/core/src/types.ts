@@ -814,7 +814,13 @@ export type Character = {
             [key: string]: any[];
         };
         transcription?: TranscriptionProvider;
-        ragKnowledge?: boolean;
+        ragKnowledge?: {
+            enabled?: boolean;
+            chunkSize?: number;
+            bleed?: number;
+            delimiter?: string;
+            respectDelimiters?: boolean;
+        };
     };
 
     /** Optional client-specific config */

@@ -49,12 +49,26 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
      * @param opts Options for the manager.
      */
     constructor(opts: RAGKnowledgeManagerOptions) {
+        // Validate configuration
+        if (opts.chunkSize && (opts.chunkSize < 100 || opts.chunkSize > 8000)) {
+            throw new Error('Chunk size must be between 100 and 8000 characters');
+        }
+        if (opts.bleed && (opts.bleed < 0 || opts.bleed > opts.chunkSize)) {
+            throw new Error('Bleed must be between 0 and chunk size');
+        }
+
         this.runtime = opts.runtime;
         this.tableName = opts.tableName;
         this.defaultChunkSize = opts.chunkSize || this.defaultChunkSize;
         this.defaultBleed = opts.bleed || this.defaultBleed;
         this.defaultDelimiter = opts.delimiter || this.defaultDelimiter;
         this.respectDelimiters = opts.respectDelimiters ?? this.respectDelimiters;
+
+        elizaLogger.info(`Initialized RAGKnowledgeManager with settings:
+- Chunk size: ${this.defaultChunkSize}
+- Bleed: ${this.defaultBleed}
+- Delimiter: ${this.defaultDelimiter}
+- Respect delimiters: ${this.respectDelimiters}`);
     }
 
     private readonly defaultRAGMatchThreshold = 0.85;
@@ -429,18 +443,26 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
 
             // Step 3: Process remaining content into chunks
             if (contentSections.length > 0) {
-                const remainingContent = contentSections.join(effectiveDelimiter);
                 const chunkSize = file.chunkSize || this.defaultChunkSize;
+                const bleed = file.bleed || this.defaultBleed;
+                const chunks: string[] = [];
 
-                // Only split into chunks if content exceeds chunk size
-                const chunks = new TextEncoder().encode(remainingContent).length > chunkSize
-                    ? await splitChunks(
-                        remainingContent,
-                        chunkSize,
-                        file.bleed || this.defaultBleed,
-                        effectiveDelimiter
-                    )
-                    : [remainingContent];
+                // Process each section separately
+                for (const section of contentSections) {
+                    if (section.length > chunkSize) {
+                        // If section is too large, split it into chunks
+                        const sectionChunks = await splitChunks(
+                            section,
+                            chunkSize,
+                            bleed,
+                            effectiveDelimiter
+                        );
+                        chunks.push(...sectionChunks);
+                    } else {
+                        // If section fits within limit, keep it whole
+                        chunks.push(section);
+                    }
+                }
 
                 const totalChunks = chunks.length;
                 elizaLogger.info(`Generated ${totalChunks} chunks`);

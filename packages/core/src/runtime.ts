@@ -308,7 +308,11 @@ export class AgentRuntime implements IAgentRuntime {
 
         this.ragKnowledgeManager = new RAGKnowledgeManager({
             runtime: this,
-            tableName: "knowledge",
+            tableName: 'knowledge',
+            chunkSize: this.character.settings?.ragKnowledge?.chunkSize,
+            bleed: this.character.settings?.ragKnowledge?.bleed,
+            delimiter: this.character.settings?.ragKnowledge?.delimiter,
+            respectDelimiters: this.character.settings?.ragKnowledge?.respectDelimiters
         });
 
         (opts.managers ?? []).forEach((manager: IMemoryManager) => {
