@@ -376,43 +376,17 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
             );
 
             // Step 1: Preprocessing
-            //const preprocessStart = Date.now();
             const processedContent = this.preprocess(content);
             timeMarker("Preprocessing");
 
-            // Step 2: Main document embedding
-            const mainEmbeddingArray = await embed(
-                this.runtime,
-                processedContent
-            );
-            const mainEmbedding = new Float32Array(mainEmbeddingArray);
-            timeMarker("Main embedding");
-
-            // Step 3: Create main document
-            await this.runtime.databaseAdapter.createKnowledge({
-                id: stringToUuid(file.path),
-                agentId: this.runtime.agentId,
-                content: {
-                    text: content,
-                    metadata: {
-                        source: file.path,
-                        type: file.type,
-                        isShared: file.isShared || false,
-                    },
-                },
-                embedding: mainEmbedding,
-                createdAt: Date.now(),
-            });
-            timeMarker("Main document storage");
-
-            // Step 4: Generate chunks
+            // Step 2: Generate chunks first
             const chunks = await splitChunks(processedContent, 512, 20);
             const totalChunks = chunks.length;
             elizaLogger.info(`Generated ${totalChunks} chunks`);
             timeMarker("Chunk generation");
 
-            // Step 5: Process chunks with larger batches
-            const BATCH_SIZE = 10; // Increased batch size
+            // Step 3: Process chunks with larger batches
+            const BATCH_SIZE = 10;
             let processedChunks = 0;
 
             for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
@@ -460,6 +434,27 @@ export class RAGKnowledgeManager implements IRAGKnowledgeManager {
                     `[Batch Progress] Processed ${processedChunks}/${totalChunks} chunks (${batchTime.toFixed(2)}s for batch)`
                 );
             }
+
+            // Step 4: Create main document using first chunk's embedding as representative
+            const mainEmbeddingArray = await embed(this.runtime, chunks[0]);
+            const mainEmbedding = new Float32Array(mainEmbeddingArray);
+
+            await this.runtime.databaseAdapter.createKnowledge({
+                id: stringToUuid(file.path),
+                agentId: this.runtime.agentId,
+                content: {
+                    text: content,
+                    metadata: {
+                        source: file.path,
+                        type: file.type,
+                        isShared: file.isShared || false,
+                        isMain: true
+                    },
+                },
+                embedding: mainEmbedding,
+                createdAt: Date.now(),
+            });
+            timeMarker("Main document storage");
 
             const totalTime = (Date.now() - startTime) / 1000;
             elizaLogger.info(
